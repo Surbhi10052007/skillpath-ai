@@ -13,7 +13,7 @@ import type { NodeStatus, Project, RoadmapNode } from "@/types";
 
 export function DashboardView() {
   const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading, loggingOut } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, loggingOut } = useAuth();
   const { data, status, error, refresh, applyData } = useProfile();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [openProject, setOpenProject] = useState<Project | null>(null);
@@ -23,14 +23,18 @@ export function DashboardView() {
   // Route decisions happen only after the session check has settled.
   useEffect(() => {
     if (authLoading || status === "loading" || loggingOut) return;
-    if (status === "needs-onboarding") {
+    // `user.onboarded` comes from /api/auth/me (profile row exists) and is the
+    // authoritative flag. Only treat the profile as missing when the session
+    // ALSO says so — otherwise a brief stale profile status could bounce a
+    // freshly-onboarded student back into onboarding.
+    if (status === "needs-onboarding" && user?.onboarded === false) {
       router.replace("/onboarding");
       return;
     }
     if (status === "anonymous" && !isAuthenticated) {
       router.replace("/login?next=/dashboard");
     }
-  }, [authLoading, status, isAuthenticated, loggingOut, router]);
+  }, [authLoading, status, isAuthenticated, loggingOut, router, user?.onboarded]);
 
   const setNodeStatus = useCallback(
     async (node: RoadmapNode, next: NodeStatus) => {

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useProfile } from "@/components/providers/ProfileProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { AuthPending } from "@/components/auth/RequireAuth";
 import { Roadmap } from "@/components/roadmap/Roadmap";
 import { roadmapService } from "@/lib/api/services";
@@ -10,16 +11,24 @@ import type { NodeStatus, RoadmapNode } from "@/types";
 
 export function RoadmapPage() {
   const { data, status, error, applyData } = useProfile();
+  const { user } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Only treat the profile as missing when the session flag ALSO says so —
+  // same rule as the dashboard, so a transient profile status can never
+  // bounce an onboarded student back into onboarding.
+  const trulyNeedsOnboarding = status === "needs-onboarding" && user?.onboarded === false;
+
   useEffect(() => {
-    if (status === "needs-onboarding") router.replace("/onboarding");
-  }, [status, router]);
+    if (trulyNeedsOnboarding) router.replace("/onboarding");
+  }, [trulyNeedsOnboarding, router]);
 
   if (status === "loading") return <AuthPending label="Loading your route" />;
-  if (status === "needs-onboarding") return <AuthPending label="Opening onboarding" />;
+  if (status === "needs-onboarding" && trulyNeedsOnboarding) {
+    return <AuthPending label="Opening onboarding" />;
+  }
   if (!data) {
     return (
       <div className="mx-auto max-w-xl px-5 py-40 text-center">

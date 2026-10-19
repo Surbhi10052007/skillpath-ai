@@ -22,7 +22,7 @@ interface ProfileContextValue {
   data: DashboardData | null;
   status: ProfileStatus;
   error: string | null;
-  /** Re-read the profile from the server (or guest store). */
+  /** Re-read the profile from the server (or guest store). Always authoritative. */
   refresh: () => Promise<void>;
   /** Apply a server response we already have, e.g. after a roadmap PATCH. */
   applyData: (next: DashboardData) => void;
@@ -32,17 +32,22 @@ const ProfileContext = createContext<ProfileContextValue | null>(null);
 
 /**
  * The single source of the signed-in student's profile + analysis.
- * Every surface (dashboard, roadmap, projects, home, assistant) reads from
- * here, so the app can never disagree with itself about who the user is or
- * whether they have onboarded.
+ *
+ * IMPORTANT: `load` deliberately asks the server every time instead of
+ * short-circuiting on a locally cached "onboarded" flag. That flag lives on the
+ * auth user object, so a refresh fired immediately after onboarding used to run
+ * with a *stale* closure (`onboarded: false`) and write `needs-onboarding` over
+ * correct state — which bounced students straight back into onboarding.
+ *
+ * A monotonically increasing sequence number means only the newest request may
+ * commit its result, so an in-flight older refresh can never clobber a newer one.
  */
 export function ProfileProvider({ children }: { children: ReactNode }) {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const onboarded = user?.onboarded ?? false;
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [status, setStatus] = useState<ProfileStatus>("loading");
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef<Promise<void> | null>(null);
+  const sequence = useRef(0);
 
   const readGuest = useCallback((): DashboardData | null => {
     const profile = guestStore.getProfile();
@@ -56,27 +61,30 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const load = useCallback(async () => {
+    const requestId = ++sequence.current;
     setError(null);
+
     if (isAuthenticated) {
-      // The session already tells us whether a profile exists — skip the
-      // guaranteed-404 round trip for users who haven't onboarded yet.
-      if (!onboarded) {
-        setData(null);
-        setStatus("needs-onboarding");
-        return;
-      }
       try {
         const next = await dashboardService.get();
-        setData(next);
+        if (requestId !== sequence.current) return; // a newer load already answered
+        // The endpoint answers 200 with { onboarded:false } rather than 404.
+        if ("onboarded" in next && next.onboarded === false) {
+          setData(null);
+          setStatus("needs-onboarding");
+          return;
+        }
+        setData(next as DashboardData);
         setStatus("ready");
       } catch (caught) {
+        if (requestId !== sequence.current) return;
         if (caught instanceof ApiError && caught.code === "NOT_ONBOARDED") {
           setData(null);
           setStatus("needs-onboarding");
           return;
         }
         if (caught instanceof ApiError && caught.status === 401) {
-          // AuthProvider handles the session drop centrally.
+          // AuthProvider owns the session-drop behaviour.
           setData(null);
           setStatus("anonymous");
           return;
@@ -88,18 +96,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }
 
     const guest = readGuest();
+    if (requestId !== sequence.current) return;
     setData(guest);
     setStatus(guest ? "ready" : "anonymous");
-  }, [isAuthenticated, onboarded, readGuest]);
+  }, [isAuthenticated, readGuest]);
 
-  const refresh = useCallback(async () => {
-    if (inFlight.current) return inFlight.current;
-    const run = load().finally(() => {
-      inFlight.current = null;
-    });
-    inFlight.current = run;
-    return run;
-  }, [load]);
+  const refresh = useCallback(() => load(), [load]);
 
   useEffect(() => {
     if (authLoading) {
@@ -107,9 +109,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       return;
     }
     void refresh();
-  }, [authLoading, isAuthenticated, onboarded, refresh]);
+  }, [authLoading, isAuthenticated, refresh]);
 
   const applyData = useCallback((next: DashboardData) => {
+    // Treat externally-supplied data as the newest source of truth.
+    sequence.current += 1;
     setData(next);
     setStatus("ready");
   }, []);

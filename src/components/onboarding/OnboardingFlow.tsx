@@ -109,10 +109,17 @@ const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 export function OnboardingFlow() {
   const router = useRouter();
   const reduce = useReducedMotion();
-  const { user, loading, markOnboarded } = useAuth();
+  const { user, loading, markOnboarded, refreshUser } = useAuth();
   const { refresh: refreshProfile } = useProfile();
   const [hydrated, setHydrated] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  /**
+   * `?mode=edit` is the explicit "change my profile" intent. Without it, an
+   * already-onboarded student visiting /onboarding is sent to their dashboard
+   * instead of being shown Step 1 again.
+   */
+  const [routeReady, setRouteReady] = useState(false);
+  const [editIntent, setEditIntent] = useState(false);
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState(1);
   const [query, setQuery] = useState("");
@@ -130,6 +137,25 @@ export function OnboardingFlow() {
     targetRole: "",
     interests: [],
   });
+
+  useEffect(() => {
+    // Read via window (not useSearchParams) so /onboarding stays a static route.
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    setEditIntent(mode === "edit");
+    setRouteReady(true);
+  }, []);
+
+  /**
+   * Route guard. Order matters:
+   *   auth loading            -> wait
+   *   not authenticated       -> allowed (guest onboarding is a real flow)
+   *   authenticated+onboarded -> dashboard, unless ?mode=edit
+   *   authenticated+new       -> stay here
+   */
+  useEffect(() => {
+    if (!routeReady || loading || building) return;
+    if (user?.onboarded && !editIntent) router.replace("/dashboard");
+  }, [routeReady, loading, building, user?.onboarded, editIntent, router]);
 
   /**
    * Prefill from whatever already exists so a returning student is never asked
@@ -272,17 +298,38 @@ export function OnboardingFlow() {
           skills: draftProfile.skills,
         });
         guestStore.clear();
+        // Mark locally for immediate feedback, then reconcile both providers
+        // with the server before leaving this screen. Doing this *before*
+        // navig* prevents the dashboard mounting on stale state.
         markOnboarded();
       } else {
         guestStore.setProfile(draftProfile);
         guestStore.setProgress({});
         guestStore.addActivity({ type: "profile", message: "Built your first personalized path" });
       }
-      await refreshProfile();
+      // The save is committed. Reconciling client state is best-effort: if a
+      // refetch fails we must NOT tell the student the save failed, because the
+      // profile is already in PostgreSQL and the guards will recover on load.
+      if (user) {
+        try {
+          // /api/auth/me is authoritative: onboarded === profile row exists.
+          await refreshUser();
+        } catch {
+          /* keep the optimistic markOnboarded() value */
+        }
+      }
+      try {
+        await refreshProfile();
+      } catch {
+        /* dashboard will re-read on mount */
+      }
+
       setBuildStage(BUILD_STAGES.length);
       await wait(300);
-      router.push(isEditing ? "/profile" : "/dashboard");
+      // `replace` so Back doesn't drop the student onto a completed onboarding.
+      router.replace(isEditing ? "/profile" : "/dashboard");
     } catch (caught) {
+      // Genuine save failure: stay on the review step with a real message.
       setBuilding(false);
       setBuildStage(-1);
       setError(caught instanceof Error ? caught.message : "We couldn’t save your path. Please try again.");
@@ -295,6 +342,23 @@ export function OnboardingFlow() {
   const progress = ((step + 1) / STEPS.length) * 100;
   const inputClass =
     "h-12 w-full rounded-2xl border border-white/10 bg-ink/50 pl-11 pr-4 text-sm text-fg placeholder:text-dim transition focus:border-electric/60 focus:outline-none focus:shadow-[0_0_0_4px_rgba(139,92,246,.12)]";
+
+  // Never paint Step 1 while the session/profile is still resolving, and never
+  // paint it for a student who is already onboarded (they're being redirected).
+  if (!routeReady || loading || (user?.onboarded && !editIntent)) {
+    return (
+      <div className="relative grid min-h-dvh place-items-center overflow-hidden">
+        <GradientBlobs className="-z-10" />
+        <div aria-hidden className="absolute inset-0 -z-10 grid-fade opacity-50" />
+        <div className="relative flex flex-col items-center gap-4 px-6 text-center" role="status">
+          <span className="h-2 w-2 animate-pulse bg-electric" />
+          <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-dim">
+            {loading || !routeReady ? "Restoring your session" : "Opening your dashboard"}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-dvh overflow-hidden">

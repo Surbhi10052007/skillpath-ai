@@ -90,7 +90,13 @@ export async function saveStudentProfile(userId: number, input: ProfileInput) {
       updatedAt: now,
     };
     if (existing) {
-      await tx.update(profiles).set(values).where(eq(profiles.userId, userId));
+      // `profiles` row existence is the onboarding-complete signal (see
+      // getCurrentUser). Repair a null onboardedAt so the timestamp is always
+      // consistent with that signal.
+      await tx
+        .update(profiles)
+        .set(existing.onboardedAt ? values : { ...values, onboardedAt: now })
+        .where(eq(profiles.userId, userId));
       if (existing.targetRole !== input.targetRole) {
         // A new destination means a fresh roadmap.
         await tx.delete(roadmapProgress).where(eq(roadmapProgress.userId, userId));

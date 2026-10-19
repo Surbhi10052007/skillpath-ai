@@ -52,11 +52,19 @@ export const catalogService = {
 
 export const profileService = {
   get: () => request<{ profile: StudentProfile | null }>("/profile", { cache: "no-store" }),
-  save: (payload: ProfilePayload) => request<{ profile: StudentProfile }>("/profile", { method: "PUT", body: payload }),
+  save: (payload: ProfilePayload) =>
+    request<{ profile: StudentProfile; onboarded: boolean }>("/profile", { method: "PUT", body: payload }),
 };
 
 export const dashboardService = {
-  get: () => request<DashboardData>("/dashboard", { cache: "no-store" }),
+  /**
+   * Resolves either the full dashboard or a benign `{ onboarded: false }`
+   * payload for authenticated users who have not onboarded yet.
+   */
+  get: () =>
+    request<DashboardData | { onboarded: false; code: string; error: string }>("/dashboard", {
+      cache: "no-store",
+    }),
 };
 
 export const roadmapService = {

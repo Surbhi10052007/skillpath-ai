@@ -74,7 +74,7 @@ export function CommandCenter({
         <div className="lg:text-right">
           <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-dim">Readiness</p>
           <p className="font-display text-8xl leading-none text-fg sm:text-9xl">{analysis.readiness}<span className="text-electric">%</span></p>
-          <Link href="/onboarding" className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted hover:text-electric">
+          <Link href="/onboarding?mode=edit" className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted hover:text-electric">
             <PencilLine className="h-3.5 w-3.5" /> Recalibrate
           </Link>
         </div>

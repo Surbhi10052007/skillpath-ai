@@ -48,7 +48,7 @@ export function ProfileView() {
           </p>
         </div>
         <Link
-          href="/onboarding"
+          href="/onboarding?mode=edit"
           className="inline-flex items-center gap-2 border border-fg/20 px-5 py-3 font-mono text-[11px] uppercase tracking-[0.16em] text-fg transition hover:border-electric hover:text-electric"
         >
           <PencilLine className="h-3.5 w-3.5" /> Edit profile
